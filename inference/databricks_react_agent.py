@@ -12,6 +12,32 @@ import random
 import datetime
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union, Callable
 
+def load_environment_variables():
+    """Load environment variables from .env file if available"""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv('.env')
+        print("🔧 ENV_LOADED: Successfully loaded .env file")
+
+        # Log loaded API keys status
+        api_keys = {
+            'SERPER_KEY_ID': os.environ.get('SERPER_KEY_ID'),
+            'PERPLEXITY_API_KEY': os.environ.get('PERPLEXITY_API_KEY'),
+            'JINA_API_KEYS': os.environ.get('JINA_API_KEYS'),
+            'API_KEY': os.environ.get('API_KEY'),
+            'SANDBOX_FUSION_ENDPOINT': os.environ.get('SANDBOX_FUSION_ENDPOINT')
+        }
+
+        for key, value in api_keys.items():
+            status = 'SET' if value else 'MISSING'
+            print(f"🔧 ENV_KEY: {key}={status}")
+
+    except ImportError:
+        print("🔧 ENV_WARNING: python-dotenv not available, using system environment")
+
+# Load environment variables early
+load_environment_variables()
+
 from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
 from qwen_agent.agents.fncall_agent import FnCallAgent
@@ -26,6 +52,7 @@ from tool_file import *
 from tool_scholar import *
 from tool_python import *
 from tool_search import *
+from tool_perplexity import *
 from tool_visit import *
 from prompt import *
 
@@ -39,6 +66,7 @@ TOOL_CLASS = [
     Scholar(),
     Visit(),
     Search(),
+    PerplexitySearch(),
     PythonInterpreter(),
 ]
 TOOL_MAP = {tool.name: tool for tool in TOOL_CLASS}
@@ -92,8 +120,17 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         prompt_parts = []
 
         for msg in msgs:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
+            # Handle both dict and string formats
+            if isinstance(msg, dict):
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+            elif isinstance(msg, str):
+                # If it's a string, treat it as user message
+                role = "user"
+                content = msg
+            else:
+                print(f"WARNING: Unexpected message type: {type(msg)}")
+                continue
 
             if role == "system":
                 prompt_parts.append(f"System: {content}")
@@ -111,8 +148,16 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
             try:
                 print(f"--- Calling predict() function, attempt {attempt + 1}/{max_tries} ---")
 
-                # Call your predict function
-                response = self.predict_function(full_prompt)
+                # Format input for your predict function (expects list of dicts)
+                model_input = [{
+                    "prompt": full_prompt,
+                    "max_length": 2048,
+                    "temperature": float(os.environ.get('TEMPERATURE', 0.85)),
+                    "presence_penalty": float(os.environ.get('PRESENCE_PENALTY', 1.1))
+                }]
+
+                # Call your predict function with the expected format
+                response = self.predict_function(model_input)
 
                 if response and response.strip():
                     print("--- Predict function call successful ---")
@@ -122,6 +167,9 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
             except Exception as e:
                 print(f"Error: Attempt {attempt + 1} failed: {e}")
+                print(f"ERROR DETAILS: {type(e).__name__}: {str(e)}")
+                import traceback
+                traceback.print_exc()
 
             if attempt < max_tries - 1:
                 sleep_time = 1 * (2 ** attempt) + random.uniform(0, 1)
@@ -192,25 +240,116 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
             # Check for tool calls
             if '<tool_call>' in content and '</tool_call>' in content:
-                tool_call = content.split('<tool_call>')[1].split('</tool_call>')[0]
+                print(f"🔧 TOOL CALL TRACE: ========== TOOL CALL DETECTED ==========")
+                print(f"🔧 TOOL CALL TRACE: Round {round_count}, LLM calls remaining: {num_llm_calls_available}")
+                print(f"🔧 TOOL CALL TRACE: Full content length: {len(content)} chars")
+                print(f"🔧 TOOL CALL TRACE: Content preview: {content[:200]}...")
+
+                # Extract tool call with detailed tracing
+                try:
+                    tool_call_start = content.find('<tool_call>')
+                    tool_call_end = content.find('</tool_call>')
+                    print(f"🔧 TOOL CALL TRACE: Start index: {tool_call_start}, End index: {tool_call_end}")
+
+                    if tool_call_start == -1 or tool_call_end == -1:
+                        raise ValueError("Tool call tags not properly formed")
+
+                    tool_call = content[tool_call_start + len('<tool_call>'):tool_call_end]
+                    print(f"🔧 TOOL CALL TRACE: Extracted tool call: '{tool_call}'")
+                    print(f"🔧 TOOL CALL TRACE: Tool call length: {len(tool_call)} chars")
+                    print(f"🔧 TOOL CALL TRACE: Tool call type: {type(tool_call)}")
+
+                    # Check for whitespace issues
+                    stripped_tool_call = tool_call.strip()
+                    if len(stripped_tool_call) != len(tool_call):
+                        print(f"🔧 TOOL CALL TRACE: Whitespace detected - original: {len(tool_call)}, stripped: {len(stripped_tool_call)}")
+                        tool_call = stripped_tool_call
+
+                except Exception as extraction_e:
+                    print(f"🚨 TOOL CALL EXTRACTION ERROR: {type(extraction_e).__name__}: {extraction_e}")
+                    import traceback
+                    traceback.print_exc()
+                    result = f'Error: Failed to extract tool call: {str(extraction_e)}'
+                    tool_response = f"<tool_response>\n{result}\n</tool_response>"
+                    messages.append({"role": "user", "content": tool_response})
+                    continue
 
                 try:
                     # Handle Python code specially
                     if "python" in tool_call.lower():
+                        print(f"🔧 TOOL CALL TRACE: ===== PYTHON CODE EXECUTION =====")
+                        print(f"🔧 TOOL CALL TRACE: Searching for <code> tags in tool call...")
+
                         try:
-                            code_raw = content.split('<tool_call>')[1].split('</tool_call>')[0].split('<code>')[1].split('</code>')[0].strip()
-                            result = TOOL_MAP['PythonInterpreter'].call(code_raw)
-                        except:
-                            result = "[Python Interpreter Error]: Formatting error."
+                            # More robust code extraction
+                            if '<code>' in content and '</code>' in content:
+                                code_start = content.find('<code>')
+                                code_end = content.find('</code>')
+                                code_raw = content[code_start + len('<code>'):code_end].strip()
+                                print(f"🔧 TOOL CALL TRACE: Extracted Python code ({len(code_raw)} chars):")
+                                print(f"🔧 TOOL CALL TRACE: Code preview: {code_raw[:200]}...")
+
+                                print(f"🔧 TOOL CALL TRACE: Calling PythonInterpreter tool...")
+                                result = TOOL_MAP['PythonInterpreter'].call(code_raw)
+                                print(f"🔧 TOOL CALL TRACE: Python execution result type: {type(result)}")
+                                print(f"🔧 TOOL CALL TRACE: Python result length: {len(str(result))} chars")
+                            else:
+                                raise ValueError("No <code> tags found for Python execution")
+
+                        except Exception as python_e:
+                            print(f"🚨 PYTHON EXECUTION ERROR: {type(python_e).__name__}: {python_e}")
+                            import traceback
+                            traceback.print_exc()
+                            result = f"[Python Interpreter Error]: {str(python_e)}"
+
                     else:
+                        print(f"🔧 TOOL CALL TRACE: ===== JSON TOOL CALL PARSING =====")
+                        print(f"🔧 TOOL CALL TRACE: Attempting to parse as JSON...")
+                        print(f"🔧 TOOL CALL TRACE: Raw tool call for JSON parsing: '{tool_call}'")
+
+                        # Check if it looks like valid JSON
+                        if not tool_call.startswith('{') or not tool_call.endswith('}'):
+                            print(f"🚨 JSON FORMAT WARNING: Tool call doesn't start/end with braces")
+                            print(f"🚨 First char: '{tool_call[0] if tool_call else 'EMPTY'}', Last char: '{tool_call[-1] if tool_call else 'EMPTY'}'")
+
                         # Parse JSON tool call
-                        tool_call_parsed = json5.loads(tool_call)
+                        try:
+                            tool_call_parsed = json5.loads(tool_call)
+                            print(f"🔧 TOOL CALL TRACE: ✅ JSON parsing successful")
+                            print(f"🔧 TOOL CALL TRACE: Parsed JSON type: {type(tool_call_parsed)}")
+                            print(f"🔧 TOOL CALL TRACE: Parsed JSON: {tool_call_parsed}")
+                        except json5.JSONError as json_e:
+                            print(f"🚨 JSON PARSING ERROR: {type(json_e).__name__}: {json_e}")
+                            print(f"🚨 Problematic JSON: '{tool_call}'")
+                            raise json_e
+
+                        # Extract tool name and arguments
                         tool_name = tool_call_parsed.get('name', '')
                         tool_args = tool_call_parsed.get('arguments', {})
+                        print(f"🔧 TOOL CALL TRACE: Extracted tool_name: '{tool_name}' (type: {type(tool_name)})")
+                        print(f"🔧 TOOL CALL TRACE: Extracted tool_args: {tool_args} (type: {type(tool_args)})")
+
+                        # Validate tool name
+                        if not tool_name:
+                            raise ValueError("Tool name is empty or missing")
+                        if tool_name not in TOOL_MAP:
+                            print(f"🚨 UNKNOWN TOOL WARNING: '{tool_name}' not in {list(TOOL_MAP.keys())}")
+
+                        print(f"🔧 TOOL CALL TRACE: Calling custom_call_tool('{tool_name}', {tool_args})...")
                         result = self.custom_call_tool(tool_name, tool_args)
+                        print(f"🔧 TOOL CALL TRACE: ✅ Tool execution completed")
+                        print(f"🔧 TOOL CALL TRACE: Result type: {type(result)}")
+                        print(f"🔧 TOOL CALL TRACE: Result length: {len(str(result))} chars")
 
                 except Exception as e:
-                    result = f'Error: Tool call is not valid JSON or tool execution failed: {str(e)}'
+                    print(f"🚨 TOOL CALL EXCEPTION: {type(e).__name__}: {str(e)}")
+                    print(f"🚨 Exception during tool call processing in round {round_count}")
+                    print(f"🚨 Current tool call: '{tool_call}' (length: {len(tool_call)})")
+                    print(f"🚨 Current content preview: {content[:300]}...")
+                    import traceback
+                    print("🚨 FULL TRACEBACK:")
+                    traceback.print_exc()
+                    result = f'Error: Tool call processing failed: {type(e).__name__}: {str(e)}'
 
                 # Add tool response
                 tool_response = f"<tool_response>\n{result}\n</tool_response>"
@@ -277,18 +416,50 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         """Execute a tool with given arguments"""
+        print(f"🛠️ TRACE: custom_call_tool called")
+        print(f"🛠️ TRACE: tool_name: '{tool_name}'")
+        print(f"🛠️ TRACE: tool_args: {tool_args}")
+        print(f"🛠️ TRACE: tool_args type: {type(tool_args)}")
+        print(f"🛠️ TRACE: Available tools: {list(TOOL_MAP.keys())}")
+
         if tool_name in TOOL_MAP:
             try:
-                return TOOL_MAP[tool_name].call(tool_args)
+                print(f"🛠️ TRACE: Calling {tool_name} tool...")
+                print(f"🛠️ TRACE: Tool object: {TOOL_MAP[tool_name]}")
+
+                result = TOOL_MAP[tool_name].call(tool_args)
+
+                print(f"🛠️ TRACE: Tool {tool_name} completed")
+                print(f"🛠️ TRACE: Result type: {type(result)}")
+                print(f"🛠️ TRACE: Result length: {len(str(result))} characters")
+                print(f"🛠️ TRACE: Result preview: {str(result)[:200]}...")
+
+                return result
             except Exception as e:
-                return f"Tool {tool_name} execution failed: {str(e)}"
+                error_msg = f"Tool {tool_name} execution failed: {str(e)}"
+                print(f"🛠️ TRACE: Tool execution failed: {error_msg}")
+                print(f"🛠️ TRACE: Exception type: {type(e).__name__}")
+                import traceback
+                print(f"🛠️ TRACE: Full traceback:")
+                traceback.print_exc()
+                return error_msg
         else:
-            return f"Tool {tool_name} not found in available tools: {list(TOOL_MAP.keys())}"
+            error_msg = f"Tool {tool_name} not found in available tools: {list(TOOL_MAP.keys())}"
+            print(f"🛠️ TRACE: {error_msg}")
+            return error_msg
 
     def count_tokens(self, messages):
         """
         Simplified token counting - just count characters and divide by 4
         For production, you might want to use a proper tokenizer
         """
-        total_chars = sum(len(str(msg.get('content', ''))) for msg in messages)
+        total_chars = 0
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get('content', '')
+            elif isinstance(msg, str):
+                content = msg
+            else:
+                content = str(msg)
+            total_chars += len(str(content))
         return total_chars // 4  # Rough approximation

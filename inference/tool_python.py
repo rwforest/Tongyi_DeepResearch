@@ -10,12 +10,12 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Array of sandbox fusion endpoints
-SANDBOX_FUSION_ENDPOINTS = []
-
-# Fallback to single endpoint if environment variable exists
-if 'SANDBOX_FUSION_ENDPOINT' in os.environ:
-    SANDBOX_FUSION_ENDPOINTS = os.environ['SANDBOX_FUSION_ENDPOINT'].split(',')
+def get_sandbox_endpoints():
+    """Get SANDBOX_FUSION_ENDPOINTS at runtime to ensure .env is loaded"""
+    endpoints = []
+    if 'SANDBOX_FUSION_ENDPOINT' in os.environ:
+        endpoints = os.environ['SANDBOX_FUSION_ENDPOINT'].split(',')
+    return endpoints
 
 
 @register_tool('PythonInterpreter', allow_overwrite=True)
@@ -69,7 +69,12 @@ class PythonInterpreter(BaseToolWithFileAccess):
             for attempt in range(8):
                 try:
                     # Randomly sample an endpoint for each attempt
-                    endpoint = random.choice(SANDBOX_FUSION_ENDPOINTS)
+                    endpoints = get_sandbox_endpoints()
+                    if not endpoints:
+                        print("🐍 PYTHON_ERROR: No SANDBOX_FUSION_ENDPOINT configured")
+                        return 'Error: Python execution requires SANDBOX_FUSION_ENDPOINT to be configured'
+                    endpoint = random.choice(endpoints)
+                    print(f"🐍 PYTHON_API: using_endpoint={endpoint}")
                     print(f"Attempt {attempt + 1}/5 using endpoint: {endpoint}")
                     
                     code_result = run_code(RunCodeRequest(code=code, language='python', run_timeout=timeout), max_attempts=1, client_timeout=timeout, endpoint=endpoint)

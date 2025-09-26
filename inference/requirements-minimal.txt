@@ -1,0 +1,40 @@
+# Minimal requirements for Databricks ReAct Inference
+# Core dependencies only - install additional packages as needed
+
+# Essential packages
+python-dotenv==1.1.1
+requests==2.32.5
+tqdm==4.67.1
+json5==0.12.1
+
+# Qwen Agent framework (core)
+qwen-agent==0.0.26
+
+# Data processing
+numpy==2.2.6
+pandas==2.3.2
+
+# Threading and async
+aiofiles==24.1.0
+
+# Your predict function (choose one):
+# For HuggingFace models:
+# transformers==4.56.1
+# torch>=2.0.0
+
+# For Databricks SDK:
+# databricks-sdk
+
+# For MLflow:
+# mlflow
+
+# For OpenAI API:
+# openai==1.99.5
+
+# Optional tools (install only if needed):
+# Web search: No additional packages needed (uses built-in requests)
+# Python interpreter: sandbox-fusion==0.3.7
+# File processing: pillow==11.3.0, pdfplumber==0.11.7, python-pptx==1.0.2
+# Google Scholar: No additional packages needed
+# Visit tool: tiktoken==0.11.0 (for token counting)
+# Dashscope tools: dashscope==1.24.4

@@ -22,17 +22,11 @@ from qwen_agent.tools.storage import KeyNotExistsError, Storage
 from file_tools.utils import (get_file_type, hash_sha256, is_http_url, get_basename_from_url, 
                                   sanitize_chrome_file_path, save_url_to_local_work_dir)
 from qwen_agent.utils.tokenization_qwen import count_tokens, tokenizer
-from file_tools.idp import IDP
+# IDP import removed - using basic parsing only
 
 # Configuration constants
 PARSER_SUPPORTED_FILE_TYPES = ['pdf', 'docx', 'pptx', 'txt', 'html', 'csv', 'tsv', 'xlsx', 'xls', 'doc', 'zip', '.mp4', '.mov', '.mkv', '.webm', '.mp3', '.wav']
-def str_to_bool(value):
-    """Convert string to boolean, handling common true/false representations"""
-    if isinstance(value, bool):
-        return value
-    return str(value).lower() in ('true', '1', 'yes', 'on')
-USE_IDP = str_to_bool(os.getenv("USE_IDP", "True"))
-IDP_TIMEOUT = 150000
+# IDP configuration removed - using basic parsing only
 ENABLE_CSI = False
 PARAGRAPH_SPLIT_SYMBOL = '\n'
 
@@ -53,41 +47,10 @@ class FileParserError(Exception):
         self.exception = exception
 
 
-def parse_file_by_idp(file_path: str = None, file_url: str = None) -> List[dict]:
-    idp = IDP()
-    try:
-        fid = idp.file_submit_with_url(file_url) if file_url else idp.file_submit_with_path(file_path)
-        if not fid:
-            return []
-
-        for _ in range(10):  
-            result, status = idp.file_parser_query(fid)
-            if status == 'success':
-                return process_idp_result(result)
-            time.sleep(10)
-
-        logger.error("IDP parsing timeout")
-        return []
-    except Exception as e:
-        logger.error(f"IDP processing failed: {str(e)}")
-        return []
+# parse_file_by_idp function removed - using basic parsing only
 
 
-def process_idp_result(result: dict) -> List[dict]:
-    pages = []
-    current_page = None
-
-    for layout in result.get('layouts', []):
-        page_num = layout.get('pageNum', 0)
-        content = layout.get('markdownContent', '')
-
-        if current_page and current_page['page_num'] == page_num:
-            current_page['content'].append({'text': content})
-        else:
-            current_page = {'page_num': page_num, 'content': [{'text': content}]}
-            pages.append(current_page)
-
-    return pages
+# process_idp_result function removed - using basic parsing only
 
 
 def clean_text(text: str) -> str:
@@ -515,22 +478,13 @@ class SingleFileParser(BaseTool):
 
     def _process_new_file(self, file_path: str) -> Union[str, list]:
         file_type = get_file_type(file_path)
-        idp_types = ['pdf', 'docx', 'pptx', 'xlsx', 'jpg', 'png', 'mp3']
         logger.info(f'Start parsing {file_path}...')
         logger.info(f'File type {file_type}...')
         logger.info(f"structured_doc {self.cfg.get('structured_doc')}...")
 
-        if file_type not in idp_types:
-            file_type = get_basename_from_url(file_path).split('.')[-1].lower()
-
+        # Use basic parsing only (IDP removed)
         try:
-            if USE_IDP and file_type in idp_types:
-                try:
-                    results = parse_file_by_idp(file_path=file_path)
-                except Exception as e:
-                    results = self.parsers[file_type](file_path)
-            else:
-                results = self.parsers[file_type](file_path)
+            results = self.parsers[file_type](file_path)
             tokens = 0
             for page in results:
                 for para in page['content']:

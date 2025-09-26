@@ -14,10 +14,16 @@ import time
 from transformers import AutoTokenizer
 import tiktoken
 
-VISIT_SERVER_TIMEOUT = int(os.getenv("VISIT_SERVER_TIMEOUT", 200))
-WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
-
-JINA_API_KEYS = os.getenv("JINA_API_KEYS", "")
+def get_visit_config():
+    """Get visit tool configuration at runtime to ensure .env is loaded"""
+    return {
+        'timeout': int(os.getenv("VISIT_SERVER_TIMEOUT", 200)),
+        'max_length': int(os.getenv("WEBCONTENT_MAXLENGTH", 150000)),
+        'jina_keys': os.getenv("JINA_API_KEYS", ""),
+        'api_key': os.environ.get("API_KEY"),
+        'api_base': os.environ.get("API_BASE"),
+        'model_name': os.environ.get("SUMMARY_MODEL_NAME", "")
+    }
 
 
 @staticmethod
@@ -97,9 +103,20 @@ class Visit(BaseTool):
         return response.strip()
         
     def call_server(self, msgs, max_retries=2):
-        api_key = os.environ.get("API_KEY")
-        url_llm = os.environ.get("API_BASE")
-        model_name = os.environ.get("SUMMARY_MODEL_NAME", "")
+        config = get_visit_config()
+        api_key = config['api_key']
+        url_llm = config['api_base']
+        model_name = config['model_name']
+
+        print(f"🌐 VISIT_API: call_server(api_key={'SET' if api_key else 'MISSING'}, base={'SET' if url_llm else 'MISSING'}, model='{model_name}')")
+
+        if not api_key or not url_llm:
+            return json.dumps({
+                "rational": "Missing API configuration",
+                "evidence": "API_KEY, API_BASE, or SUMMARY_MODEL_NAME not configured in environment",
+                "summary": "Cannot process webpage content without proper API configuration"
+            })
+
         client = OpenAI(
             api_key=api_key,
             base_url=url_llm,
@@ -145,7 +162,7 @@ class Visit(BaseTool):
         
         for attempt in range(max_retries):
             headers = {
-                "Authorization": f"Bearer {JINA_API_KEYS}",
+                "Authorization": f"Bearer {get_visit_config()['jina_keys']}",
             }
             try:
                 response = requests.get(

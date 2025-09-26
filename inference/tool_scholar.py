@@ -7,7 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 import http.client
 
 
-SERPER_KEY=os.environ.get('SERPER_KEY_ID')
+def get_scholar_serper_key():
+    """Get SERPER_KEY at runtime to ensure .env is loaded"""
+    return os.environ.get('SERPER_KEY_ID')
 
 
 @register_tool("google_scholar", allow_overwrite=True)
@@ -28,13 +30,19 @@ class Scholar(BaseTool):
     }
 
     def google_scholar_with_serp(self, query: str):
+        SERPER_KEY = get_scholar_serper_key()
+        print(f"📚 SCHOLAR_API: google_scholar_with_serp(query='{query}', key={'SET' if SERPER_KEY else 'MISSING'})")
+
+        if not SERPER_KEY:
+            error_msg = "[Scholar Error] SERPER_KEY_ID environment variable not set. Please configure your Serper API key."
+            print(f"📚 SCHOLAR_ERROR: {error_msg}")
+            return error_msg
+
         conn = http.client.HTTPSConnection("google.serper.dev")
-        payload = json.dumps({
-        "q": query,
-        })
+        payload = json.dumps({"q": query})
         headers = {
-        'X-API-KEY': SERPER_KEY,
-        'Content-Type': 'application/json'
+            'X-API-KEY': SERPER_KEY,
+            'Content-Type': 'application/json'
         }
         for i in range(5):
             try:
