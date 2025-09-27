@@ -45,13 +45,15 @@ class Search(BaseTool):
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
     def google_search_with_serp(self, query: str):
+        start_time = time.time()
         SERPER_KEY = get_serper_key()
         print(f"🔍 API_CALL: google_search_with_serp(query='{query}', key={'SET' if SERPER_KEY else 'MISSING'})")
 
         # Check if API key is available
         if not SERPER_KEY:
             error_msg = f"[Search Error] SERPER_KEY_ID environment variable not set. Please configure your Serper API key."
-            print(f"🔍 API_ERROR: {error_msg}")
+            elapsed = time.time() - start_time
+            print(f"🔍 API_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
             return error_msg
 
         conn = http.client.HTTPSConnection("google.serper.dev", timeout=30)
@@ -82,7 +84,8 @@ class Search(BaseTool):
 
         try:
             if "organic" not in results:
-                print(f"🔍 API_NODATA: No organic results for '{query}'")
+                elapsed = time.time() - start_time
+                print(f"🔍 API_NODATA: No organic results for '{query}' (⏱️ {elapsed:.2f}s)")
                 raise Exception(f"No results found for query: '{query}'. Use a less specific query.")
 
             web_snippets = list()
@@ -95,17 +98,20 @@ class Search(BaseTool):
                 web_snippets.append(redacted_version)
 
             content = f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n" + "\n\n".join(web_snippets)
-            print(f"🔍 API_SUCCESS: query='{query}' results={len(web_snippets)} content_size={len(content)}")
+            elapsed = time.time() - start_time
+            print(f"🔍 API_SUCCESS: query='{query}' results={len(web_snippets)} content_size={len(content)} (⏱️ {elapsed:.2f}s)")
             return content
         except Exception as e:
+            elapsed = time.time() - start_time
             error_msg = f"No results found for '{query}'. Try with a more general query."
-            print(f"🔍 API_EXCEPTION: {type(e).__name__}:{str(e)} returning='{error_msg}'")
+            print(f"🔍 API_EXCEPTION: {type(e).__name__}:{str(e)} returning='{error_msg}' (⏱️ {elapsed:.2f}s)")
             return error_msg
 
 
     
     def perplexity_search_with_api(self, query: str, max_results: int = 10):
         """Execute search using Perplexity Search API (new dedicated search endpoint)"""
+        start_time = time.time()
         config = get_search_config()
         PERPLEXITY_API_KEY = config['perplexity_key']
 
@@ -114,7 +120,8 @@ class Search(BaseTool):
         # Check if API key is available
         if not PERPLEXITY_API_KEY:
             error_msg = "[Search Error] PERPLEXITY_API_KEY environment variable not set. Please configure your Perplexity API key."
-            print(f"🧠 SEARCH_ERROR: {error_msg}")
+            elapsed = time.time() - start_time
+            print(f"🧠 SEARCH_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
             return error_msg
 
         conn = http.client.HTTPSConnection("api.perplexity.ai", timeout=60)
@@ -200,16 +207,19 @@ class Search(BaseTool):
 
             content = f"A Perplexity search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n" + "\n\n".join(web_snippets)
 
-            print(f"🧠 SEARCH_SUCCESS: query='{query}' results={len(results)} content_size={len(content)}")
+            elapsed = time.time() - start_time
+            print(f"🧠 SEARCH_SUCCESS: query='{query}' results={len(results)} content_size={len(content)} (⏱️ {elapsed:.2f}s)")
             return content
 
         except json.JSONDecodeError as e:
+            elapsed = time.time() - start_time
             error_msg = f"Failed to parse Perplexity Search API response: {str(e)}"
-            print(f"🧠 SEARCH_JSON_ERROR: {error_msg}")
+            print(f"🧠 SEARCH_JSON_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
             return f"[Search Error] {error_msg}"
         except Exception as e:
+            elapsed = time.time() - start_time
             error_msg = f"Error processing Perplexity search response: {str(e)}"
-            print(f"🧠 SEARCH_PARSE_ERROR: {error_msg}")
+            print(f"🧠 SEARCH_PARSE_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
             return f"[Search Error] {error_msg}"
 
     def search_with_serp(self, query: str):
@@ -218,43 +228,55 @@ class Search(BaseTool):
 
     def search_with_backend(self, query: str):
         """Search using the configured backend (Serper or Perplexity)"""
+        start_time = time.time()
         config = get_search_config()
 
         if config['use_perplexity']:
             print(f"🔍 SEARCH_BACKEND: Using Perplexity Search API for query '{query}'")
-            return self.perplexity_search_with_api(query, config['perplexity_max_results'])
+            result = self.perplexity_search_with_api(query, config['perplexity_max_results'])
         else:
             print(f"🔍 SEARCH_BACKEND: Using Serper for query '{query}'")
-            return self.search_with_serp(query)
+            result = self.search_with_serp(query)
+
+        elapsed = time.time() - start_time
+        print(f"🔍 SEARCH_BACKEND: completed query='{query}' (⏱️ {elapsed:.2f}s)")
+        return result
 
     def call(self, params: Union[str, dict], **kwargs) -> str:
+        start_time = time.time()
         print(f"🔍 TOOL_CALL: Search.call(params_type={type(params)}, params={params})")
 
         try:
             query = params["query"]
             print(f"🔍 TOOL_EXTRACT: query={query} query_type={type(query)}")
         except Exception as e:
+            elapsed = time.time() - start_time
             error_msg = "[Search] Invalid request format: Input must be a JSON object containing 'query' field"
-            print(f"🔍 TOOL_ERROR: extract_failed={type(e).__name__}:{e} returning='{error_msg}'")
+            print(f"🔍 TOOL_ERROR: extract_failed={type(e).__name__}:{e} returning='{error_msg}' (⏱️ {elapsed:.2f}s)")
             return error_msg
 
         if isinstance(query, str):
             print(f"🔍 TOOL_MODE: single_query='{query}'")
             response = self.search_with_backend(query)
-            print(f"🔍 TOOL_RESULT: single_response_length={len(response)}")
+            elapsed = time.time() - start_time
+            print(f"🔍 TOOL_RESULT: single_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
         else:
             print(f"🔍 TOOL_MODE: multiple_queries={len(query)}")
             assert isinstance(query, List)
             responses = []
             for i, q in enumerate(query):
+                query_start = time.time()
                 print(f"🔍 TOOL_BATCH: processing={i+1}/{len(query)} query='{q}'")
                 response_single = self.search_with_backend(q)
-                print(f"🔍 TOOL_BATCH: result={i+1} length={len(response_single)}")
+                query_elapsed = time.time() - query_start
+                print(f"🔍 TOOL_BATCH: result={i+1} length={len(response_single)} (⏱️ {query_elapsed:.2f}s)")
                 responses.append(response_single)
 
             response = "\n=======\n".join(responses)
-            print(f"🔍 TOOL_RESULT: combined_response_length={len(response)}")
+            elapsed = time.time() - start_time
+            print(f"🔍 TOOL_RESULT: combined_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
 
-        print(f"🔍 TOOL_RETURN: final_response_length={len(response)}")
+        elapsed = time.time() - start_time
+        print(f"🔍 TOOL_RETURN: final_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
         return response
 

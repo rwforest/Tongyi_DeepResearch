@@ -68,53 +68,75 @@ class Visit(BaseTool):
     }
     # The `call` method is the main function of the tool.
     def call(self, params: Union[str, dict], predict_function=None, **kwargs) -> str:
+        start_time = time.time()
         print(f"🌐 VISIT_CALL: Visit.call(predict_function={'SET' if predict_function else 'MISSING'})")
 
         try:
             url = params["url"]
             goal = params["goal"]
         except:
-            return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
-
-        start_time = time.time()
+            elapsed = time.time() - start_time
+            error_msg = "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
+            print(f"🌐 VISIT_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
+            return error_msg
 
         # Create log folder if it doesn't exist
         log_folder = "log"
         os.makedirs(log_folder, exist_ok=True)
 
         if isinstance(url, str):
+            print(f"🌐 VISIT_MODE: single_url='{url}'")
             response = self.readpage_jina(url, goal, predict_function)
+            elapsed = time.time() - start_time
+            print(f"🌐 VISIT_RESULT: single_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
         else:
+            print(f"🌐 VISIT_MODE: multiple_urls={len(url)}")
             response = []
             assert isinstance(url, List)
-            start_time = time.time()
-            for u in url:
-                if time.time() - start_time > 900:
+            batch_start_time = time.time()
+            for i, u in enumerate(url):
+                url_start_time = time.time()
+                if time.time() - batch_start_time > 900:
+                    print(f"🌐 VISIT_TIMEOUT: batch processing exceeded 900s, aborting remaining URLs")
                     cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(url=url, goal=goal)
                     cur_response += "Evidence in page: \n" + "The provided webpage content could not be accessed. Please check the URL or file format." + "\n\n"
                     cur_response += "Summary: \n" + "The webpage content could not be processed, and therefore, no information is available." + "\n\n"
                 else:
                     try:
+                        print(f"🌐 VISIT_BATCH: processing={i+1}/{len(url)} url='{u}'")
                         cur_response = self.readpage_jina(u, goal, predict_function)
+                        url_elapsed = time.time() - url_start_time
+                        print(f"🌐 VISIT_BATCH: result={i+1} length={len(cur_response)} (⏱️ {url_elapsed:.2f}s)")
                     except Exception as e:
+                        url_elapsed = time.time() - url_start_time
                         cur_response = f"Error fetching {u}: {str(e)}"
+                        print(f"🌐 VISIT_BATCH: error={i+1} {type(e).__name__}:{e} (⏱️ {url_elapsed:.2f}s)")
                 response.append(cur_response)
             response = "\n=======\n".join(response)
-        
-        print(f'Summary Length {len(response)}; Summary Content {response}')
+            elapsed = time.time() - start_time
+            print(f"🌐 VISIT_RESULT: combined_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
+
+        elapsed = time.time() - start_time
+        print(f"🌐 VISIT_RETURN: final_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
         return response.strip()
         
     def call_server(self, msgs, max_retries=2, predict_function=None):
+        start_time = time.time()
         print(f"🌐 VISIT_API: call_server(predict_function={'SET' if predict_function else 'MISSING'}, msgs_count={len(msgs)})")
 
         # Use predict function if provided, otherwise fall back to OpenAI API
         if predict_function:
-            return self.call_server_with_predict(msgs, max_retries, predict_function)
+            result = self.call_server_with_predict(msgs, max_retries, predict_function)
         else:
-            return self.call_server_with_openai(msgs, max_retries)
+            result = self.call_server_with_openai(msgs, max_retries)
+
+        elapsed = time.time() - start_time
+        print(f"🌐 VISIT_API: call_server completed (⏱️ {elapsed:.2f}s)")
+        return result
 
     def call_server_with_predict(self, msgs, max_retries, predict_function):
         """Use predict function for content summarization"""
+        start_time = time.time()
         print(f"🌐 VISIT_PREDICT: Using predict function for summarization")
 
         # Convert messages to prompt format for predict function
@@ -136,6 +158,7 @@ class Visit(BaseTool):
 
         for attempt in range(max_retries):
             try:
+                attempt_start = time.time()
                 print(f"🌐 VISIT_PREDICT: Attempt {attempt + 1}/{max_retries}")
 
                 # Format input for predict function
@@ -148,12 +171,15 @@ class Visit(BaseTool):
 
                 # Call predict function
                 content = predict_function(model_input)
-                print(f"🌐 VISIT_PREDICT: Response length={len(content)} chars")
+                attempt_elapsed = time.time() - attempt_start
+                print(f"🌐 VISIT_PREDICT: Response length={len(content)} chars (⏱️ {attempt_elapsed:.2f}s)")
 
                 if content and content.strip():
                     # Try to extract JSON from response
                     try:
                         json.loads(content.strip())
+                        elapsed = time.time() - start_time
+                        print(f"🌐 VISIT_PREDICT: Success on attempt {attempt + 1} (⏱️ {elapsed:.2f}s)")
                         return content.strip()
                     except:
                         # Extract JSON from string if it's embedded
@@ -163,28 +189,37 @@ class Visit(BaseTool):
                             json_content = content[left:right+1]
                             try:
                                 json.loads(json_content)  # Validate JSON
+                                elapsed = time.time() - start_time
+                                print(f"🌐 VISIT_PREDICT: JSON extracted on attempt {attempt + 1} (⏱️ {elapsed:.2f}s)")
                                 return json_content
                             except:
                                 pass
 
                         # If no valid JSON found, wrap the content
+                        elapsed = time.time() - start_time
+                        print(f"🌐 VISIT_PREDICT: Content wrapped on attempt {attempt + 1} (⏱️ {elapsed:.2f}s)")
                         return json.dumps({
                             "rational": "Content extracted from webpage",
                             "evidence": content.strip()[:2000],  # Limit length
                             "summary": "Webpage content processed but not in expected JSON format"
                         })
                 else:
-                    print(f"🌐 VISIT_PREDICT: Empty response on attempt {attempt + 1}")
+                    print(f"🌐 VISIT_PREDICT: Empty response on attempt {attempt + 1} (⏱️ {attempt_elapsed:.2f}s)")
 
             except Exception as e:
-                print(f"🌐 VISIT_PREDICT: Error attempt {attempt + 1}: {type(e).__name__}:{e}")
+                attempt_elapsed = time.time() - attempt_start
+                print(f"🌐 VISIT_PREDICT: Error attempt {attempt + 1}: {type(e).__name__}:{e} (⏱️ {attempt_elapsed:.2f}s)")
                 if attempt == max_retries - 1:
+                    elapsed = time.time() - start_time
+                    print(f"🌐 VISIT_PREDICT: Final failure after {max_retries} attempts (⏱️ {elapsed:.2f}s)")
                     return json.dumps({
                         "rational": f"Predict function failed after {max_retries} attempts",
                         "evidence": f"Error: {str(e)}",
                         "summary": "Unable to process webpage content due to predict function error"
                     })
 
+        elapsed = time.time() - start_time
+        print(f"🌐 VISIT_PREDICT: No content returned after {max_retries} attempts (⏱️ {elapsed:.2f}s)")
         return ""
 
     def call_server_with_openai(self, msgs, max_retries):

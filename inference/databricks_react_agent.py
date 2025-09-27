@@ -116,6 +116,8 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         Returns:
             Generated response string
         """
+        start_time = time.time()
+        print(f"🤖 PREDICT_CALL: Starting predict function with {len(msgs)} messages")
         # Convert messages to prompt format for predict function
         prompt_parts = []
 
@@ -146,6 +148,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         # Retry logic
         for attempt in range(max_tries):
             try:
+                attempt_start = time.time()
                 print(f"--- Calling predict() function, attempt {attempt + 1}/{max_tries} ---")
 
                 # Format input for your predict function (expects list of dicts)
@@ -158,15 +161,18 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
                 # Call your predict function with the expected format
                 response = self.predict_function(model_input)
+                attempt_elapsed = time.time() - attempt_start
 
                 if response and response.strip():
-                    print("--- Predict function call successful ---")
+                    elapsed = time.time() - start_time
+                    print(f"🤖 PREDICT_SUCCESS: attempt={attempt + 1} response_length={len(response)} (⏱️ {attempt_elapsed:.2f}s total: {elapsed:.2f}s)")
                     return response.strip()
                 else:
-                    print(f"Warning: Attempt {attempt + 1} received empty response")
+                    print(f"🤖 PREDICT_EMPTY: attempt={attempt + 1} received empty response (⏱️ {attempt_elapsed:.2f}s)")
 
             except Exception as e:
-                print(f"Error: Attempt {attempt + 1} failed: {e}")
+                attempt_elapsed = time.time() - attempt_start
+                print(f"🤖 PREDICT_ERROR: attempt={attempt + 1} {type(e).__name__}:{e} (⏱️ {attempt_elapsed:.2f}s)")
                 print(f"ERROR DETAILS: {type(e).__name__}: {str(e)}")
                 import traceback
                 traceback.print_exc()
@@ -176,6 +182,8 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 print(f"Retrying in {sleep_time:.2f} seconds...")
                 time.sleep(sleep_time)
 
+        elapsed = time.time() - start_time
+        print(f"🤖 PREDICT_FINAL_FAIL: Failed after {max_tries} attempts (⏱️ {elapsed:.2f}s)")
         raise Exception(f"Predict function failed after {max_tries} attempts")
 
     def _run(self, data, model=None, planning_port=None):
@@ -405,6 +413,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
             if num_llm_calls_available == 0:
                 termination = 'exceed available llm calls'
 
+        session_elapsed = time.time() - start_time
         result = {
             "question": question,
             "answer": answer,
@@ -412,10 +421,13 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
             "prediction": prediction,
             "termination": termination
         }
+
+        print(f"🚀 SESSION_COMPLETE: rounds={round_count} prediction_length={len(prediction)} (⏱️ {session_elapsed:.2f}s)")
         return result
 
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         """Execute a tool with given arguments"""
+        tool_start_time = time.time()
         print(f"🛠️ TRACE: custom_call_tool called")
         print(f"🛠️ TRACE: tool_name: '{tool_name}'")
         print(f"🛠️ TRACE: tool_args: {tool_args}")
@@ -434,23 +446,26 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 else:
                     result = TOOL_MAP[tool_name].call(tool_args)
 
-                print(f"🛠️ TRACE: Tool {tool_name} completed")
+                tool_elapsed = time.time() - tool_start_time
+                print(f"🛠️ TRACE: Tool {tool_name} completed (⏱️ {tool_elapsed:.2f}s)")
                 print(f"🛠️ TRACE: Result type: {type(result)}")
                 print(f"🛠️ TRACE: Result length: {len(str(result))} characters")
                 print(f"🛠️ TRACE: Result preview: {str(result)[:200]}...")
 
                 return result
             except Exception as e:
+                tool_elapsed = time.time() - tool_start_time
                 error_msg = f"Tool {tool_name} execution failed: {str(e)}"
-                print(f"🛠️ TRACE: Tool execution failed: {error_msg}")
+                print(f"🛠️ TRACE: Tool execution failed: {error_msg} (⏱️ {tool_elapsed:.2f}s)")
                 print(f"🛠️ TRACE: Exception type: {type(e).__name__}")
                 import traceback
                 print(f"🛠️ TRACE: Full traceback:")
                 traceback.print_exc()
                 return error_msg
         else:
+            tool_elapsed = time.time() - tool_start_time
             error_msg = f"Tool {tool_name} not found in available tools: {list(TOOL_MAP.keys())}"
-            print(f"🛠️ TRACE: {error_msg}")
+            print(f"🛠️ TRACE: {error_msg} (⏱️ {tool_elapsed:.2f}s)")
             return error_msg
 
     def count_tokens(self, messages):
