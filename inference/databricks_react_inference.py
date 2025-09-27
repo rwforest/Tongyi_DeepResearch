@@ -106,48 +106,224 @@ class DatabricksReactInference:
 
     def research_question(self,
                          question: str,
-                         model_name: str = "tongyi-deep-research") -> Dict[str, Any]:
+                         model_name: str = "tongyi-deep-research",
+                         auto_end_run: bool = True) -> Dict[str, Any]:
         """
         Process a single research question using DatabricksMultiTurnReactAgent
 
         Args:
             question: Research question to process
             model_name: Model identifier
+            auto_end_run: Whether to automatically end MLflow run when complete
 
         Returns:
             Result dictionary with prediction and metadata
         """
         print(f"🔬 Processing research question: {question}")
 
-        # Initialize agent
-        llm_cfg = {
-            'model': model_name,
-            'generate_cfg': {
-                'max_input_tokens': 320000,
-                'max_retries': 10,
-                'temperature': float(os.environ.get('TEMPERATURE', 0.85)),
-                'top_p': 0.95,
-                'presence_penalty': float(os.environ.get('PRESENCE_PENALTY', 1.1))
-            },
-            'model_type': 'databricks'
-        }
+        # Import MLflow management functions
+        try:
+            from mlflow_config import create_tracing_context, end_run_safely, ensure_mlflow_initialized
+            import mlflow
+        except ImportError:
+            import mlflow
+            create_tracing_context = None
+            end_run_safely = None
 
-        agent = DatabricksMultiTurnReactAgent(
-            predict_function=self.predict_function,
-            llm=llm_cfg,
-            function_list=["search", "visit", "google_scholar", "PythonInterpreter"]
-        )
+        # Ensure MLflow is initialized
+        if ensure_mlflow_initialized:
+            ensure_mlflow_initialized()
 
-        # Process question
-        data = {
-            'item': {
-                'question': question,
-                'answer': ''  # Reference answer (empty for new questions)
+        # Start MLflow run if none is active
+        run_started_here = False
+        if not mlflow.active_run():
+            import datetime
+            run_name = f"research_question_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+            if create_tracing_context:
+                run = create_tracing_context(run_name)
+            else:
+                run = mlflow.start_run(run_name=run_name)
+
+            run_started_here = True
+            print(f"📊 Started MLflow run: {run.info.run_id}")
+
+        try:
+            # Initialize agent
+            llm_cfg = {
+                'model': model_name,
+                'generate_cfg': {
+                    'max_input_tokens': 320000,
+                    'max_retries': 10,
+                    'temperature': float(os.environ.get('TEMPERATURE', 0.85)),
+                    'top_p': 0.95,
+                    'presence_penalty': float(os.environ.get('PRESENCE_PENALTY', 1.1))
+                },
+                'model_type': 'databricks'
             }
-        }
 
-        result = agent._run(data, model_name)
-        return result
+            agent = DatabricksMultiTurnReactAgent(
+                predict_function=self.predict_function,
+                llm=llm_cfg,
+                function_list=["search", "visit", "google_scholar", "PythonInterpreter"]
+            )
+
+            # Process question
+            data = {
+                'item': {
+                    'question': question,
+                    'answer': ''  # Reference answer (empty for new questions)
+                }
+            }
+
+            result = agent._run(data, model_name)
+
+            # Log final research results to MLflow run
+            if mlflow.active_run():
+                try:
+                    mlflow.log_params({
+                        "research_question": question[:200],  # Truncated for MLflow
+                        "model_name": model_name,
+                        "temperature": float(os.environ.get('TEMPERATURE', 0.85)),
+                        "presence_penalty": float(os.environ.get('PRESENCE_PENALTY', 1.1))
+                    })
+
+                    mlflow.log_metrics({
+                        "prediction_length": len(result.get('prediction', '')),
+                        "message_count": len(result.get('messages', [])),
+                        "research_success": 1 if result.get('termination') == 'answer' else 0
+                    })
+
+                    # Log the prediction as an artifact
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+                        f.write(f"# Research Question\n\n{question}\n\n")
+                        f.write(f"# Answer\n\n{result.get('prediction', 'No answer generated')}\n\n")
+                        f.write(f"# Status\n\n{result.get('termination', 'unknown')}\n")
+                        temp_file = f.name
+
+                    mlflow.log_artifact(temp_file, "research_results")
+
+                    # Clean up temp file
+                    import os
+                    os.unlink(temp_file)
+
+                    print("📊 Research results logged to MLflow")
+
+                except Exception as mlflow_error:
+                    print(f"⚠️ MLflow logging warning: {mlflow_error}")
+
+            # Save result to file
+            self._save_research_result(result, question, model_name)
+
+            return result
+
+        finally:
+            # End MLflow run if we started it and auto_end_run is True
+            if run_started_here and auto_end_run:
+                if end_run_safely:
+                    end_run_safely()
+                else:
+                    try:
+                        mlflow.end_run()
+                        print("📊 MLflow run ended")
+                    except Exception as e:
+                        print(f"⚠️ Could not end MLflow run: {e}")
+
+    def _save_research_result(self, result: Dict[str, Any], question: str, model_name: str):
+        """
+        Save research result to multiple formats for persistence
+
+        Args:
+            result: The result dictionary from agent._run()
+            question: Original research question
+            model_name: Model identifier
+        """
+        import datetime
+        import os
+
+        # Create output directory
+        output_dir = os.path.join(os.getcwd(), "research_results")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Generate filename with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_question = "".join(c for c in question[:50] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_question = safe_question.replace(' ', '_')
+
+        base_filename = f"research_{timestamp}_{safe_question}"
+
+        try:
+            # 1. Save complete result as JSON
+            json_file = os.path.join(output_dir, f"{base_filename}_complete.json")
+            with open(json_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+
+            # 2. Save just the prediction as markdown
+            md_file = os.path.join(output_dir, f"{base_filename}_answer.md")
+            with open(md_file, 'w', encoding='utf-8') as f:
+                f.write(f"# Research Question\n\n{question}\n\n")
+                f.write(f"# Answer\n\n{result.get('prediction', 'No answer generated')}\n\n")
+                f.write(f"# Metadata\n\n")
+                f.write(f"- **Model**: {model_name}\n")
+                f.write(f"- **Termination**: {result.get('termination', 'unknown')}\n")
+                f.write(f"- **Timestamp**: {datetime.datetime.now().isoformat()}\n")
+                f.write(f"- **Message Count**: {len(result.get('messages', []))}\n")
+
+            # 3. Save summary to CSV for tracking
+            csv_file = os.path.join(output_dir, "research_log.csv")
+            import csv
+            import os.path
+
+            # Create header if file doesn't exist
+            file_exists = os.path.isfile(csv_file)
+            with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['timestamp', 'question', 'model', 'termination', 'prediction_length', 'json_file', 'md_file'])
+
+                writer.writerow([
+                    datetime.datetime.now().isoformat(),
+                    question[:100],  # Truncated question
+                    model_name,
+                    result.get('termination', 'unknown'),
+                    len(result.get('prediction', '')),
+                    json_file,
+                    md_file
+                ])
+
+            print(f"💾 Research results saved:")
+            print(f"   📄 Complete: {json_file}")
+            print(f"   📝 Answer: {md_file}")
+            print(f"   📊 Log: {csv_file}")
+
+        except Exception as e:
+            print(f"⚠️ Failed to save research result: {e}")
+
+    def research_question_with_run_control(self, question: str, run_name: str = None) -> Dict[str, Any]:
+        """
+        Research with explicit MLflow run control - for when you want to manage runs manually
+
+        Args:
+            question: Research question
+            run_name: Custom run name (optional)
+
+        Returns:
+            Result dictionary with prediction and metadata
+        """
+        import mlflow
+        import datetime
+
+        run_name = run_name or f"manual_research_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        with mlflow.start_run(run_name=run_name) as run:
+            print(f"📊 Started controlled MLflow run: {run.info.run_id}")
+
+            # Call research_question with auto_end_run=False since we're managing the run
+            result = self.research_question(question, auto_end_run=False)
+
+            print(f"📊 Controlled MLflow run completed: {run.info.run_id}")
+            return result
 
     def batch_research(self,
                       questions: List[str],
