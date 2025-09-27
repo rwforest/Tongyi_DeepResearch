@@ -167,6 +167,7 @@ results = run_batch_inference(
 - **Main Agent**: Uses your predict() function for reasoning
 - **Visit Tool**: Uses your predict() function for webpage summarization
 - **Unified Model**: Same Tongyi DeepResearch model throughout workflow
+- **MLflow Tracing**: Optional comprehensive observability for predict functions
 
 ### **🛠️ Tool Calling**
 - **Dynamic API Keys**: Tools load environment variables at runtime
@@ -315,6 +316,39 @@ def your_function():
 
 For detailed troubleshooting, see `MLFLOW_TROUBLESHOOTING.md`
 
+### **Traced Predict Functions**
+Add comprehensive observability to any predict function:
+
+```python
+from traced_predict_wrapper import create_traced_predict_function
+
+# Wrap any predict function with MLflow tracing
+traced_predict = create_traced_predict_function(
+    your_predict_function,
+    model_name="your-model",
+    log_inputs=True,
+    log_outputs=True
+)
+
+# Use in ReAct agent for complete observability
+agent = DatabricksMultiTurnReactAgent(
+    predict_function=traced_predict
+)
+```
+
+**Benefits:**
+- Input/output logging with privacy controls
+- Execution timing and performance metrics
+- Token usage approximation
+- Error tracking and classification
+- Works with any predict function signature
+
+**Pre-built wrappers available for:**
+- Databricks model serving endpoints
+- HuggingFace transformers
+- OpenAI API
+- Any custom inference function
+
 ## 📁 **File Organization**
 
 ```
@@ -339,10 +373,15 @@ inference/
 ├── test_react_tools.py                # Agent integration tests
 ├── test_visit_predict.py              # Visit tool tests
 ├── test_mlflow_tracing.py             # MLflow tracing tests
+├── traced_predict_demo.py             # Traced predict function demo
 ├── debug_tool_calling.py              # Debug utilities
 │
 ├── requirements.txt                   # Full dependencies
 ├── requirements-minimal.txt           # Minimal dependencies
+│
+├── mlflow_config.py                   # Robust MLflow configuration
+├── traced_predict_wrapper.py          # MLflow predict function wrappers
+├── MLFLOW_TROUBLESHOOTING.md          # MLflow troubleshooting guide
 │
 └── SETUP_GUIDE.md                     # Detailed setup instructions
 ```
@@ -352,8 +391,9 @@ inference/
 1. **Set up API keys** in `.env` file
 2. **Run tests** to verify configuration
 3. **Try basic research query** with your predict function
-4. **Explore advanced features** like batch processing
-5. **Check out the notebook** `databricks_react_inference.ipynb`
+4. **Add MLflow tracing** to your predict function for observability
+5. **Explore advanced features** like batch processing
+6. **Check out the notebook** `databricks_react_inference.ipynb`
 
 ## 📚 **Additional Resources**
 

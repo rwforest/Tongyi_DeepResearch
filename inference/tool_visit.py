@@ -83,7 +83,7 @@ class Visit(BaseTool):
         "required": ["url", "goal"]
     }
     # The `call` method is the main function of the tool.
-    @safe_trace_decorator(name="visit_webpage", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="visit_webpage", span_type=SpanType.TOOL, log_params=True)
     def call(self, params: Union[str, dict], predict_function=None, **kwargs) -> str:
         start_time = time.time()
         print(f"🌐 VISIT_CALL: Visit.call(predict_function={'SET' if predict_function else 'MISSING'})")

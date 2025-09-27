@@ -60,7 +60,7 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
-    @safe_trace_decorator(name="serper_search", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="serper_search", span_type=SpanType.TOOL, log_params=True)
     def google_search_with_serp(self, query: str):
         start_time = time.time()
         SERPER_KEY = get_serper_key()
@@ -165,7 +165,7 @@ class Search(BaseTool):
 
 
     
-    @safe_trace_decorator(name="perplexity_search", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="perplexity_search", span_type=SpanType.TOOL, log_params=True)
     def perplexity_search_with_api(self, query: str, max_results: int = 10):
         """Execute search using Perplexity Search API (new dedicated search endpoint)"""
         start_time = time.time()

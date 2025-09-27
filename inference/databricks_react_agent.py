@@ -42,7 +42,10 @@ load_environment_variables()
 
 # Import MLflow configuration
 try:
-    from mlflow_config import initialize_mlflow, safe_trace_decorator, create_tracing_context
+    from mlflow_config import (
+        initialize_mlflow, safe_trace_decorator, create_tracing_context,
+        ensure_mlflow_initialized, get_global_mlflow_config
+    )
     print("📊 MLFLOW: Using robust MLflow configuration")
     MLFLOW_AVAILABLE = True
 except ImportError:
@@ -57,6 +60,10 @@ except ImportError:
             except:
                 return func
         return decorator
+
+    def ensure_mlflow_initialized():
+        """Fallback function"""
+        return True
 
 from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
@@ -125,7 +132,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
     def sanity_check_output(self, content):
         return "<think>" in content and "</think>" in content
 
-    @safe_trace_decorator(name="predict_function_call", span_type=SpanType.LLM)
+    @safe_trace_decorator(name="predict_function_call", span_type=SpanType.LLM, log_params=True)
     def call_predict(self, msgs, max_tries=3):
         """
         Use predict() function instead of OpenAI API
@@ -137,6 +144,9 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         Returns:
             Generated response string
         """
+        # Ensure MLflow is initialized with global config
+        ensure_mlflow_initialized()
+
         start_time = time.time()
         print(f"🤖 PREDICT_CALL: Starting predict function with {len(msgs)} messages")
 
@@ -240,7 +250,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
         raise Exception(f"Predict function failed after {max_tries} attempts")
 
-    @safe_trace_decorator(name="react_agent_session", span_type=SpanType.AGENT)
+    @safe_trace_decorator(name="react_agent_session", span_type=SpanType.AGENT, log_params=True)
     def _run(self, data, model=None, planning_port=None):
         """
         Main run method - modified to use predict() function instead of server calls
@@ -504,7 +514,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         print(f"🚀 SESSION_COMPLETE: rounds={round_count} prediction_length={len(prediction)} (⏱️ {session_elapsed:.2f}s)")
         return result
 
-    @safe_trace_decorator(name="tool_execution", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="tool_execution", span_type=SpanType.TOOL, log_params=True)
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         """Execute a tool with given arguments"""
         tool_start_time = time.time()
