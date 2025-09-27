@@ -16,6 +16,20 @@ import tiktoken
 import mlflow
 from mlflow.entities import SpanType
 
+# Import safe MLflow configuration
+try:
+    from mlflow_config import safe_trace_decorator
+    print("📊 MLFLOW: Using safe MLflow tracing for visit")
+except ImportError:
+    def safe_trace_decorator(name, span_type=None):
+        """Fallback decorator"""
+        def decorator(func):
+            try:
+                return mlflow.trace(name=name, span_type=span_type)(func)
+            except:
+                return func
+        return decorator
+
 def get_visit_config():
     """Get visit tool configuration at runtime to ensure .env is loaded"""
     return {
@@ -69,7 +83,7 @@ class Visit(BaseTool):
         "required": ["url", "goal"]
     }
     # The `call` method is the main function of the tool.
-    @mlflow.trace(name="visit_webpage", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="visit_webpage", span_type=SpanType.TOOL)
     def call(self, params: Union[str, dict], predict_function=None, **kwargs) -> str:
         start_time = time.time()
         print(f"🌐 VISIT_CALL: Visit.call(predict_function={'SET' if predict_function else 'MISSING'})")

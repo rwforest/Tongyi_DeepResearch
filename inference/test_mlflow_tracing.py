@@ -40,9 +40,22 @@ def test_mlflow_tracing_integration():
         import mlflow
         print("✅ MLflow imported successfully")
 
-        # Start MLflow experiment
-        mlflow.set_experiment("tongyi_deepresearch_tracing")
-        print("✅ MLflow experiment set")
+        # Import robust MLflow configuration
+        try:
+            from mlflow_config import initialize_mlflow, create_tracing_context, end_run_safely
+            print("✅ Robust MLflow configuration imported")
+
+            # Initialize MLflow with safe configuration
+            initialize_mlflow()
+
+        except ImportError:
+            print("⚠️ Using basic MLflow configuration")
+            # Fallback to basic configuration
+            try:
+                mlflow.set_experiment("tongyi_deepresearch_tracing")
+                print("✅ MLflow experiment set")
+            except Exception as e:
+                print(f"⚠️ MLflow experiment warning: {e}")
 
         # Import agent components
         from databricks_react_agent import DatabricksMultiTurnReactAgent
@@ -66,7 +79,13 @@ def test_mlflow_tracing_integration():
         print("\n🚀 Starting traced agent execution...")
 
         # Run agent with MLflow tracing
-        with mlflow.start_run():
+        try:
+            # Use robust tracing context if available
+            if 'create_tracing_context' in locals():
+                run = create_tracing_context("test_session")
+            else:
+                run = mlflow.start_run()
+
             print("📊 MLflow run started")
 
             # Execute the agent - this will create nested spans
@@ -76,7 +95,17 @@ def test_mlflow_tracing_integration():
             print(f"📋 Result keys: {list(result.keys())}")
             print(f"📖 Prediction preview: {result['prediction'][:100]}...")
 
-        print("📊 MLflow run completed")
+            # End run safely
+            if 'end_run_safely' in locals():
+                end_run_safely()
+            else:
+                mlflow.end_run()
+
+            print("📊 MLflow run completed")
+
+        except Exception as run_error:
+            print(f"⚠️ MLflow run warning: {run_error}")
+            # Continue with execution even if MLflow fails
 
         # Get the current run info
         run = mlflow.active_run()

@@ -40,6 +40,24 @@ def load_environment_variables():
 # Load environment variables early
 load_environment_variables()
 
+# Import MLflow configuration
+try:
+    from mlflow_config import initialize_mlflow, safe_trace_decorator, create_tracing_context
+    print("📊 MLFLOW: Using robust MLflow configuration")
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    print("📊 MLFLOW: Using basic MLflow configuration")
+    MLFLOW_AVAILABLE = False
+
+    def safe_trace_decorator(name, span_type=None):
+        """Fallback decorator when MLflow config not available"""
+        def decorator(func):
+            try:
+                return mlflow.trace(name=name, span_type=span_type)(func)
+            except:
+                return func
+        return decorator
+
 from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
 from qwen_agent.agents.fncall_agent import FnCallAgent
@@ -107,7 +125,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
     def sanity_check_output(self, content):
         return "<think>" in content and "</think>" in content
 
-    @mlflow.trace(name="predict_function_call", span_type=SpanType.LLM)
+    @safe_trace_decorator(name="predict_function_call", span_type=SpanType.LLM)
     def call_predict(self, msgs, max_tries=3):
         """
         Use predict() function instead of OpenAI API
@@ -222,7 +240,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
         raise Exception(f"Predict function failed after {max_tries} attempts")
 
-    @mlflow.trace(name="react_agent_session", span_type=SpanType.AGENT)
+    @safe_trace_decorator(name="react_agent_session", span_type=SpanType.AGENT)
     def _run(self, data, model=None, planning_port=None):
         """
         Main run method - modified to use predict() function instead of server calls
@@ -486,7 +504,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         print(f"🚀 SESSION_COMPLETE: rounds={round_count} prediction_length={len(prediction)} (⏱️ {session_elapsed:.2f}s)")
         return result
 
-    @mlflow.trace(name="tool_execution", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="tool_execution", span_type=SpanType.TOOL)
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         """Execute a tool with given arguments"""
         tool_start_time = time.time()

@@ -285,6 +285,36 @@ mlflow ui
 # Open http://localhost:5000
 ```
 
+### **MLflow Troubleshooting**
+Common issues and solutions:
+
+#### **Default Experiment Warning**
+```python
+# Use specific experiment instead of default
+mlflow.set_experiment("tongyi_deepresearch_agent")
+
+# Or use robust configuration
+from mlflow_config import initialize_mlflow
+initialize_mlflow()
+```
+
+#### **Timeout Issues**
+```bash
+# Set timeout environment variables in .env
+MLFLOW_TRACKING_TIMEOUT=30
+MLFLOW_HTTP_REQUEST_TIMEOUT=30
+```
+
+#### **Safe Tracing**
+All tracing uses safe decorators that gracefully degrade if MLflow fails:
+```python
+@safe_trace_decorator(name="function_name", span_type=SpanType.LLM)
+def your_function():
+    # Core functionality continues even if tracing fails
+```
+
+For detailed troubleshooting, see `MLFLOW_TROUBLESHOOTING.md`
+
 ## 📁 **File Organization**
 
 ```

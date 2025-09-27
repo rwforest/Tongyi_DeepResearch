@@ -8,6 +8,20 @@ from qwen_agent.tools.base import BaseTool, register_tool
 import mlflow
 from mlflow.entities import SpanType
 
+# Import safe MLflow configuration
+try:
+    from mlflow_config import safe_trace_decorator
+    print("📊 MLFLOW: Using safe MLflow tracing for search")
+except ImportError:
+    def safe_trace_decorator(name, span_type=None):
+        """Fallback decorator"""
+        def decorator(func):
+            try:
+                return mlflow.trace(name=name, span_type=span_type)(func)
+            except:
+                return func
+        return decorator
+
 
 def get_serper_key():
     """Get SERPER_KEY at runtime to ensure .env is loaded"""
@@ -46,7 +60,7 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
-    @mlflow.trace(name="serper_search", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="serper_search", span_type=SpanType.TOOL)
     def google_search_with_serp(self, query: str):
         start_time = time.time()
         SERPER_KEY = get_serper_key()
@@ -151,7 +165,7 @@ class Search(BaseTool):
 
 
     
-    @mlflow.trace(name="perplexity_search", span_type=SpanType.TOOL)
+    @safe_trace_decorator(name="perplexity_search", span_type=SpanType.TOOL)
     def perplexity_search_with_api(self, query: str, max_results: int = 10):
         """Execute search using Perplexity Search API (new dedicated search endpoint)"""
         start_time = time.time()
