@@ -67,7 +67,9 @@ class Visit(BaseTool):
         "required": ["url", "goal"]
     }
     # The `call` method is the main function of the tool.
-    def call(self, params: Union[str, dict], **kwargs) -> str:
+    def call(self, params: Union[str, dict], predict_function=None, **kwargs) -> str:
+        print(f"🌐 VISIT_CALL: Visit.call(predict_function={'SET' if predict_function else 'MISSING'})")
+
         try:
             url = params["url"]
             goal = params["goal"]
@@ -75,25 +77,25 @@ class Visit(BaseTool):
             return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
 
         start_time = time.time()
-        
+
         # Create log folder if it doesn't exist
         log_folder = "log"
         os.makedirs(log_folder, exist_ok=True)
 
         if isinstance(url, str):
-            response = self.readpage_jina(url, goal)
+            response = self.readpage_jina(url, goal, predict_function)
         else:
             response = []
             assert isinstance(url, List)
             start_time = time.time()
-            for u in url: 
+            for u in url:
                 if time.time() - start_time > 900:
                     cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(url=url, goal=goal)
                     cur_response += "Evidence in page: \n" + "The provided webpage content could not be accessed. Please check the URL or file format." + "\n\n"
                     cur_response += "Summary: \n" + "The webpage content could not be processed, and therefore, no information is available." + "\n\n"
                 else:
                     try:
-                        cur_response = self.readpage_jina(u, goal)
+                        cur_response = self.readpage_jina(u, goal, predict_function)
                     except Exception as e:
                         cur_response = f"Error fetching {u}: {str(e)}"
                 response.append(cur_response)
@@ -102,13 +104,97 @@ class Visit(BaseTool):
         print(f'Summary Length {len(response)}; Summary Content {response}')
         return response.strip()
         
-    def call_server(self, msgs, max_retries=2):
+    def call_server(self, msgs, max_retries=2, predict_function=None):
+        print(f"🌐 VISIT_API: call_server(predict_function={'SET' if predict_function else 'MISSING'}, msgs_count={len(msgs)})")
+
+        # Use predict function if provided, otherwise fall back to OpenAI API
+        if predict_function:
+            return self.call_server_with_predict(msgs, max_retries, predict_function)
+        else:
+            return self.call_server_with_openai(msgs, max_retries)
+
+    def call_server_with_predict(self, msgs, max_retries, predict_function):
+        """Use predict function for content summarization"""
+        print(f"🌐 VISIT_PREDICT: Using predict function for summarization")
+
+        # Convert messages to prompt format for predict function
+        prompt_parts = []
+        for msg in msgs:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                prompt_parts.append(f"System: {content}")
+            elif role == "user":
+                prompt_parts.append(f"Human: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+
+        # Add final assistant prompt
+        prompt_parts.append("Assistant:")
+        full_prompt = "\n\n".join(prompt_parts)
+
+        for attempt in range(max_retries):
+            try:
+                print(f"🌐 VISIT_PREDICT: Attempt {attempt + 1}/{max_retries}")
+
+                # Format input for predict function
+                model_input = [{
+                    "prompt": full_prompt,
+                    "max_length": 2048,
+                    "temperature": 0.7,
+                    "presence_penalty": 1.1
+                }]
+
+                # Call predict function
+                content = predict_function(model_input)
+                print(f"🌐 VISIT_PREDICT: Response length={len(content)} chars")
+
+                if content and content.strip():
+                    # Try to extract JSON from response
+                    try:
+                        json.loads(content.strip())
+                        return content.strip()
+                    except:
+                        # Extract JSON from string if it's embedded
+                        left = content.find('{')
+                        right = content.rfind('}')
+                        if left != -1 and right != -1 and left <= right:
+                            json_content = content[left:right+1]
+                            try:
+                                json.loads(json_content)  # Validate JSON
+                                return json_content
+                            except:
+                                pass
+
+                        # If no valid JSON found, wrap the content
+                        return json.dumps({
+                            "rational": "Content extracted from webpage",
+                            "evidence": content.strip()[:2000],  # Limit length
+                            "summary": "Webpage content processed but not in expected JSON format"
+                        })
+                else:
+                    print(f"🌐 VISIT_PREDICT: Empty response on attempt {attempt + 1}")
+
+            except Exception as e:
+                print(f"🌐 VISIT_PREDICT: Error attempt {attempt + 1}: {type(e).__name__}:{e}")
+                if attempt == max_retries - 1:
+                    return json.dumps({
+                        "rational": f"Predict function failed after {max_retries} attempts",
+                        "evidence": f"Error: {str(e)}",
+                        "summary": "Unable to process webpage content due to predict function error"
+                    })
+
+        return ""
+
+    def call_server_with_openai(self, msgs, max_retries):
+        """Fallback to OpenAI API if predict function not available"""
         config = get_visit_config()
         api_key = config['api_key']
         url_llm = config['api_base']
         model_name = config['model_name']
 
-        print(f"🌐 VISIT_API: call_server(api_key={'SET' if api_key else 'MISSING'}, base={'SET' if url_llm else 'MISSING'}, model='{model_name}')")
+        print(f"🌐 VISIT_OPENAI: call_server(api_key={'SET' if api_key else 'MISSING'}, base={'SET' if url_llm else 'MISSING'}, model='{model_name}')")
 
         if not api_key or not url_llm:
             return json.dumps({
@@ -133,15 +219,15 @@ class Visit(BaseTool):
                     try:
                         json.loads(content)
                     except:
-                        # extract json from string 
+                        # extract json from string
                         left = content.find('{')
-                        right = content.rfind('}') 
-                        if left != -1 and right != -1 and left <= right: 
+                        right = content.rfind('}')
+                        if left != -1 and right != -1 and left <= right:
                             content = content[left:right+1]
                     return content
             except Exception as e:
-                # print(e)
-                if attempt == (max_retries - 1):
+                print(f"🌐 VISIT_OPENAI: Error attempt {attempt + 1}: {e}")
+                if attempt == max_retries - 1:
                     return ""
                 continue
 
@@ -193,19 +279,27 @@ class Visit(BaseTool):
                 return content
         return "[visit] Failed to read page."
 
-    def readpage_jina(self, url: str, goal: str) -> str:
+    def readpage_jina(self, url: str, goal: str, predict_function=None) -> str:
         """
         Attempt to read webpage content by alternating between jina and aidata services.
-        
+
         Args:
             url: The URL to read
             goal: The goal/purpose of reading the page
-            
+            predict_function: Optional predict function to use instead of OpenAI API
+
         Returns:
             str: The webpage content or error message
         """
-   
-        summary_page_func = self.call_server
+
+        # Create a lambda that passes the predict function to call_server
+        if predict_function:
+            summary_page_func = lambda msgs, max_retries=2: self.call_server(msgs, max_retries, predict_function)
+            print(f"🌐 VISIT_JINA: Using predict function for summarization")
+        else:
+            summary_page_func = self.call_server
+            print(f"🌐 VISIT_JINA: Using OpenAI API for summarization")
+
         max_retries = int(os.getenv('VISIT_SERVER_MAX_RETRIES', 1))
 
         content = self.html_readpage_jina(url)

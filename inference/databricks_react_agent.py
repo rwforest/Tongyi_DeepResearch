@@ -427,7 +427,12 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 print(f"🛠️ TRACE: Calling {tool_name} tool...")
                 print(f"🛠️ TRACE: Tool object: {TOOL_MAP[tool_name]}")
 
-                result = TOOL_MAP[tool_name].call(tool_args)
+                # For Visit tool, pass the predict function
+                if tool_name == 'visit':
+                    result = TOOL_MAP[tool_name].call(tool_args, predict_function=self.predict_function)
+                    print(f"🛠️ TRACE: Visit tool called with predict function")
+                else:
+                    result = TOOL_MAP[tool_name].call(tool_args)
 
                 print(f"🛠️ TRACE: Tool {tool_name} completed")
                 print(f"🛠️ TRACE: Result type: {type(result)}")
