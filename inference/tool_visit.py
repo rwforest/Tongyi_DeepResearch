@@ -6,13 +6,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Union
 import requests
 from qwen_agent.tools.base import BaseTool, register_tool
-from prompt import EXTRACTOR_PROMPT 
+from prompt import EXTRACTOR_PROMPT
 from openai import OpenAI
 import random
 from urllib.parse import urlparse, unquote
-import time 
+import time
 from transformers import AutoTokenizer
 import tiktoken
+import mlflow
+from mlflow.entities import SpanType
 
 def get_visit_config():
     """Get visit tool configuration at runtime to ensure .env is loaded"""
@@ -67,9 +69,13 @@ class Visit(BaseTool):
         "required": ["url", "goal"]
     }
     # The `call` method is the main function of the tool.
+    @mlflow.trace(name="visit_webpage", span_type=SpanType.TOOL)
     def call(self, params: Union[str, dict], predict_function=None, **kwargs) -> str:
         start_time = time.time()
         print(f"🌐 VISIT_CALL: Visit.call(predict_function={'SET' if predict_function else 'MISSING'})")
+
+        # Set MLflow span inputs
+        visit_span = mlflow.get_current_active_span()
 
         try:
             url = params["url"]
@@ -78,7 +84,28 @@ class Visit(BaseTool):
             elapsed = time.time() - start_time
             error_msg = "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
             print(f"🌐 VISIT_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
+
+            # Set MLflow span outputs for parameter error
+            if visit_span:
+                visit_span.set_outputs({
+                    "error": error_msg,
+                    "success": False,
+                    "execution_time": elapsed
+                })
+
             return error_msg
+
+        # Set MLflow span inputs after successful parameter extraction
+        if visit_span:
+            visit_span.set_inputs({
+                "url": url if isinstance(url, str) else url,
+                "goal": goal,
+                "predict_function_available": predict_function is not None
+            })
+            visit_span.set_attributes({
+                "tool_type": "visit",
+                "url_type": "single" if isinstance(url, str) else "multiple"
+            })
 
         # Create log folder if it doesn't exist
         log_folder = "log"
@@ -118,6 +145,17 @@ class Visit(BaseTool):
 
         elapsed = time.time() - start_time
         print(f"🌐 VISIT_RETURN: final_response_length={len(response)} (⏱️ {elapsed:.2f}s)")
+
+        # Set MLflow span outputs for successful completion
+        if visit_span:
+            visit_span.set_outputs({
+                "response": response.strip(),
+                "response_length": len(response),
+                "success": True,
+                "execution_time": elapsed,
+                "urls_processed": len(url) if isinstance(url, list) else 1
+            })
+
         return response.strip()
         
     def call_server(self, msgs, max_retries=2, predict_function=None):

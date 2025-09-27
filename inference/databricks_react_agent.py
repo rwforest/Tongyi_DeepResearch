@@ -11,6 +11,8 @@ import time
 import random
 import datetime
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union, Callable
+import mlflow
+from mlflow.entities import SpanType
 
 def load_environment_variables():
     """Load environment variables from .env file if available"""
@@ -105,6 +107,7 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
     def sanity_check_output(self, content):
         return "<think>" in content and "</think>" in content
 
+    @mlflow.trace(name="predict_function_call", span_type=SpanType.LLM)
     def call_predict(self, msgs, max_tries=3):
         """
         Use predict() function instead of OpenAI API
@@ -118,6 +121,20 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         """
         start_time = time.time()
         print(f"🤖 PREDICT_CALL: Starting predict function with {len(msgs)} messages")
+
+        # Set MLflow span inputs
+        span = mlflow.get_current_active_span()
+        if span:
+            span.set_inputs({
+                "messages": msgs,
+                "max_tries": max_tries,
+                "message_count": len(msgs)
+            })
+            span.set_attributes({
+                "model": "tongyi-deepresearch",
+                "temperature": float(os.environ.get('TEMPERATURE', 0.85)),
+                "presence_penalty": float(os.environ.get('PRESENCE_PENALTY', 1.1))
+            })
         # Convert messages to prompt format for predict function
         prompt_parts = []
 
@@ -166,6 +183,16 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 if response and response.strip():
                     elapsed = time.time() - start_time
                     print(f"🤖 PREDICT_SUCCESS: attempt={attempt + 1} response_length={len(response)} (⏱️ {attempt_elapsed:.2f}s total: {elapsed:.2f}s)")
+
+                    # Set MLflow span outputs
+                    if span:
+                        span.set_outputs({
+                            "response": response.strip(),
+                            "response_length": len(response),
+                            "attempts_used": attempt + 1,
+                            "total_time": elapsed
+                        })
+
                     return response.strip()
                 else:
                     print(f"🤖 PREDICT_EMPTY: attempt={attempt + 1} received empty response (⏱️ {attempt_elapsed:.2f}s)")
@@ -184,8 +211,18 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
 
         elapsed = time.time() - start_time
         print(f"🤖 PREDICT_FINAL_FAIL: Failed after {max_tries} attempts (⏱️ {elapsed:.2f}s)")
+
+        # Set MLflow span outputs for failure case
+        if span:
+            span.set_outputs({
+                "error": f"Failed after {max_tries} attempts",
+                "attempts_used": max_tries,
+                "total_time": elapsed
+            })
+
         raise Exception(f"Predict function failed after {max_tries} attempts")
 
+    @mlflow.trace(name="react_agent_session", span_type=SpanType.AGENT)
     def _run(self, data, model=None, planning_port=None):
         """
         Main run method - modified to use predict() function instead of server calls
@@ -203,6 +240,19 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         answer = data['item']['answer']
 
         print(f"🔬 Processing question: {question[:100]}...")
+
+        # Set MLflow span inputs for session
+        session_span = mlflow.get_current_active_span()
+        if session_span:
+            session_span.set_inputs({
+                "question": question,
+                "reference_answer": answer,
+                "max_llm_calls": MAX_LLM_CALL_PER_RUN
+            })
+            session_span.set_attributes({
+                "agent_type": "react",
+                "model": "tongyi-deepresearch"
+            })
 
         self.user_prompt = question
         system_prompt = SYSTEM_PROMPT
@@ -422,9 +472,21 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
             "termination": termination
         }
 
+        # Set MLflow span outputs for session completion
+        if session_span:
+            session_span.set_outputs({
+                "prediction": prediction,
+                "termination": termination,
+                "rounds_completed": round_count,
+                "llm_calls_used": MAX_LLM_CALL_PER_RUN - num_llm_calls_available,
+                "session_time": session_elapsed,
+                "message_count": len(messages)
+            })
+
         print(f"🚀 SESSION_COMPLETE: rounds={round_count} prediction_length={len(prediction)} (⏱️ {session_elapsed:.2f}s)")
         return result
 
+    @mlflow.trace(name="tool_execution", span_type=SpanType.TOOL)
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         """Execute a tool with given arguments"""
         tool_start_time = time.time()
@@ -433,6 +495,18 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
         print(f"🛠️ TRACE: tool_args: {tool_args}")
         print(f"🛠️ TRACE: tool_args type: {type(tool_args)}")
         print(f"🛠️ TRACE: Available tools: {list(TOOL_MAP.keys())}")
+
+        # Set MLflow span inputs for tool execution
+        tool_span = mlflow.get_current_active_span()
+        if tool_span:
+            tool_span.set_inputs({
+                "tool_name": tool_name,
+                "tool_args": tool_args
+            })
+            tool_span.set_attributes({
+                "tool_type": tool_name,
+                "available_tools": list(TOOL_MAP.keys())
+            })
 
         if tool_name in TOOL_MAP:
             try:
@@ -452,6 +526,15 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 print(f"🛠️ TRACE: Result length: {len(str(result))} characters")
                 print(f"🛠️ TRACE: Result preview: {str(result)[:200]}...")
 
+                # Set MLflow span outputs for successful tool execution
+                if tool_span:
+                    tool_span.set_outputs({
+                        "result": str(result),
+                        "result_length": len(str(result)),
+                        "execution_time": tool_elapsed,
+                        "success": True
+                    })
+
                 return result
             except Exception as e:
                 tool_elapsed = time.time() - tool_start_time
@@ -461,11 +544,30 @@ class DatabricksMultiTurnReactAgent(FnCallAgent):
                 import traceback
                 print(f"🛠️ TRACE: Full traceback:")
                 traceback.print_exc()
+
+                # Set MLflow span outputs for failed tool execution
+                if tool_span:
+                    tool_span.set_outputs({
+                        "error": error_msg,
+                        "exception_type": type(e).__name__,
+                        "execution_time": tool_elapsed,
+                        "success": False
+                    })
+
                 return error_msg
         else:
             tool_elapsed = time.time() - tool_start_time
             error_msg = f"Tool {tool_name} not found in available tools: {list(TOOL_MAP.keys())}"
             print(f"🛠️ TRACE: {error_msg} (⏱️ {tool_elapsed:.2f}s)")
+
+            # Set MLflow span outputs for tool not found
+            if tool_span:
+                tool_span.set_outputs({
+                    "error": error_msg,
+                    "execution_time": tool_elapsed,
+                    "success": False
+                })
+
             return error_msg
 
     def count_tokens(self, messages):

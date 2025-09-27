@@ -172,6 +172,7 @@ results = run_batch_inference(
 - **Dynamic API Keys**: Tools load environment variables at runtime
 - **Comprehensive Tracing**: Single-line logging for debugging
 - **Error Handling**: Graceful fallbacks and detailed error messages
+- **MLflow Integration**: Full observability with GenAI tracing decorators
 
 ### **📊 Research Capabilities**
 - **Web Search**: Real-time search via Serper API
@@ -243,6 +244,46 @@ The system includes comprehensive tracing:
 - `🌐 VISIT_PREDICT:` - Visit tool using predict function
 - `🛠️ TRACE:` - Agent tool calling
 - `🔧 TOOL CALL TRACE:` - Detailed tool call parsing
+- `⏱️ TIMING:` - Execution time insights for all functions
+- `📊 MLFLOW:` - Comprehensive observability with GenAI tracing
+
+## 📊 **MLflow Observability**
+
+### **GenAI Tracing Integration**
+The system uses MLflow's GenAI tracing decorators for comprehensive observability:
+
+```python
+@mlflow.trace(name="react_agent_session", span_type=SpanType.AGENT)
+def _run(self, data, model=None, planning_port=None):
+    # Session-level tracing with nested spans
+```
+
+### **Hierarchical Span Structure**
+```
+Session (AGENT)
+├── LLM Call (LLM) - predict() function execution
+├── Tool Execution (TOOL)
+│   ├── Search (TOOL) - Serper/Perplexity API calls
+│   ├── Visit (TOOL) - Webpage analysis
+│   └── Other Tools (TOOL)
+└── Final Response (AGENT)
+```
+
+### **Automatic Metrics Captured**
+- **Performance**: Execution time for each component
+- **Usage**: Token/character counts, API call frequencies
+- **Reliability**: Retry attempts, success rates, error types
+- **Quality**: Response lengths, tool success rates
+
+### **Testing MLflow Integration**
+```bash
+# Test MLflow tracing integration
+python3 test_mlflow_tracing.py
+
+# View traces in MLflow UI
+mlflow ui
+# Open http://localhost:5000
+```
 
 ## 📁 **File Organization**
 
@@ -267,6 +308,7 @@ inference/
 ├── simple_search_test.py              # Search API tests
 ├── test_react_tools.py                # Agent integration tests
 ├── test_visit_predict.py              # Visit tool tests
+├── test_mlflow_tracing.py             # MLflow tracing tests
 ├── debug_tool_calling.py              # Debug utilities
 │
 ├── requirements.txt                   # Full dependencies

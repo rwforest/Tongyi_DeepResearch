@@ -5,6 +5,8 @@ import time
 from typing import List, Union, Optional
 
 from qwen_agent.tools.base import BaseTool, register_tool
+import mlflow
+from mlflow.entities import SpanType
 
 
 def get_serper_key():
@@ -44,16 +46,35 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
+    @mlflow.trace(name="serper_search", span_type=SpanType.TOOL)
     def google_search_with_serp(self, query: str):
         start_time = time.time()
         SERPER_KEY = get_serper_key()
         print(f"🔍 API_CALL: google_search_with_serp(query='{query}', key={'SET' if SERPER_KEY else 'MISSING'})")
+
+        # Set MLflow span inputs
+        span = mlflow.get_current_active_span()
+        if span:
+            span.set_inputs({"query": query})
+            span.set_attributes({
+                "search_backend": "serper",
+                "api_key_available": bool(SERPER_KEY)
+            })
 
         # Check if API key is available
         if not SERPER_KEY:
             error_msg = f"[Search Error] SERPER_KEY_ID environment variable not set. Please configure your Serper API key."
             elapsed = time.time() - start_time
             print(f"🔍 API_ERROR: {error_msg} (⏱️ {elapsed:.2f}s)")
+
+            # Set MLflow span outputs for API key error
+            if span:
+                span.set_outputs({
+                    "error": error_msg,
+                    "success": False,
+                    "execution_time": elapsed
+                })
+
             return error_msg
 
         conn = http.client.HTTPSConnection("google.serper.dev", timeout=30)
@@ -100,15 +121,37 @@ class Search(BaseTool):
             content = f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n" + "\n\n".join(web_snippets)
             elapsed = time.time() - start_time
             print(f"🔍 API_SUCCESS: query='{query}' results={len(web_snippets)} content_size={len(content)} (⏱️ {elapsed:.2f}s)")
+
+            # Set MLflow span outputs for successful search
+            if span:
+                span.set_outputs({
+                    "content": content,
+                    "results_count": len(web_snippets),
+                    "content_length": len(content),
+                    "success": True,
+                    "execution_time": elapsed
+                })
+
             return content
         except Exception as e:
             elapsed = time.time() - start_time
             error_msg = f"No results found for '{query}'. Try with a more general query."
             print(f"🔍 API_EXCEPTION: {type(e).__name__}:{str(e)} returning='{error_msg}' (⏱️ {elapsed:.2f}s)")
+
+            # Set MLflow span outputs for exception
+            if span:
+                span.set_outputs({
+                    "error": error_msg,
+                    "exception_type": type(e).__name__,
+                    "success": False,
+                    "execution_time": elapsed
+                })
+
             return error_msg
 
 
     
+    @mlflow.trace(name="perplexity_search", span_type=SpanType.TOOL)
     def perplexity_search_with_api(self, query: str, max_results: int = 10):
         """Execute search using Perplexity Search API (new dedicated search endpoint)"""
         start_time = time.time()
@@ -116,6 +159,18 @@ class Search(BaseTool):
         PERPLEXITY_API_KEY = config['perplexity_key']
 
         print(f"🧠 SEARCH_PERPLEXITY: perplexity_search(query='{query}', max_results={max_results}, key={'SET' if PERPLEXITY_API_KEY else 'MISSING'})")
+
+        # Set MLflow span inputs
+        span = mlflow.get_current_active_span()
+        if span:
+            span.set_inputs({
+                "query": query,
+                "max_results": max_results
+            })
+            span.set_attributes({
+                "search_backend": "perplexity",
+                "api_key_available": bool(PERPLEXITY_API_KEY)
+            })
 
         # Check if API key is available
         if not PERPLEXITY_API_KEY:
@@ -209,6 +264,17 @@ class Search(BaseTool):
 
             elapsed = time.time() - start_time
             print(f"🧠 SEARCH_SUCCESS: query='{query}' results={len(results)} content_size={len(content)} (⏱️ {elapsed:.2f}s)")
+
+            # Set MLflow span outputs for successful Perplexity search
+            if span:
+                span.set_outputs({
+                    "content": content,
+                    "results_count": len(results),
+                    "content_length": len(content),
+                    "success": True,
+                    "execution_time": elapsed
+                })
+
             return content
 
         except json.JSONDecodeError as e:
